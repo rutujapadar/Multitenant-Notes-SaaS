@@ -2,14 +2,18 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { useRouter } from 'next/router';
+import { getToken, getTenant, clearAuthData } from '../utils/localStorage'; 
 
-const fetcher = (url) =>
-  fetch(url, {
-    headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+// Safe fetcher with token
+const fetcher = (url) => {
+  const token = getToken();
+  return fetch(url, {
+    headers: { Authorization: token ? 'Bearer ' + token : '' }
   }).then(async (r) => {
     if (!r.ok) throw await r.json();
     return r.json();
   });
+};
 
 export default function NotesPage() {
   const router = useRouter();
@@ -17,23 +21,20 @@ export default function NotesPage() {
   const [content, setContent] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
   const [role, setRole] = useState('');
-  const { data: notes, mutate } = useSWR('/api/notes', fetcher);
+  const { data: notes, mutate } = useSWR(getToken() ? '/api/notes' : null, fetcher);
   const [error, setError] = useState('');
   const [tenantPlan, setTenantPlan] = useState('FREE');
 
   useEffect(() => {
-    setTenantSlug(localStorage.getItem('tenantSlug'));
-    setRole(localStorage.getItem('role'));
-    // fetch tenant data (we can call /api/tenants/:slug/info if created; but not required)
-    async function getTenant() {
-      const slug = localStorage.getItem('tenantSlug');
-      if (!slug) return;
-      // We'll try to use a small call to GET /api/notes and derive plan by attempting to create beyond limit.
-      // Instead, call a refresh to check plan by making a dummy request to fetch notes — plan is encoded in responses in our API? For simplicity, skip.
-      // To show "Upgrade" logic, we will count notes and if >=3 and role permits show upgrade.
+    const slug = getTenant();
+    const token = getToken();
+    if (!token) {
+      router.push('/');
+      return;
     }
-    getTenant();
-  }, []);
+    setTenantSlug(slug || '');
+    setRole(localStorage.getItem('role') || ''); 
+  }, [router]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -43,7 +44,7 @@ export default function NotesPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + localStorage.getItem('token')
+          Authorization: 'Bearer ' + getToken()
         },
         body: JSON.stringify({ title, content })
       }).then(async (r) => {
@@ -63,7 +64,7 @@ export default function NotesPage() {
   async function handleDelete(id) {
     await fetch('/api/notes/' + id, {
       method: 'DELETE',
-      headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+      headers: { Authorization: 'Bearer ' + getToken() }
     });
     mutate();
   }
@@ -72,19 +73,18 @@ export default function NotesPage() {
     const slug = tenantSlug;
     const res = await fetch('/api/tenants/' + slug + '/upgrade', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+      headers: { Authorization: 'Bearer ' + getToken() }
     });
     if (res.ok) {
       alert('Upgraded to Pro — note limit lifted');
       mutate();
-      // refresh page
     } else {
       const j = await res.json();
       alert('Upgrade failed: ' + (j.error || JSON.stringify(j)));
     }
   }
 
-  if (!localStorage.getItem('token')) {
+  if (!getToken()) {
     return (
       <div style={{ padding: 20 }}>
         <h2>Not logged in</h2>
@@ -101,10 +101,18 @@ export default function NotesPage() {
       <div style={{ marginTop: 20 }}>
         <form onSubmit={handleCreate}>
           <div>
-            <input placeholder="title" value={title} onChange={e => setTitle(e.target.value)} />
+            <input
+              placeholder="title"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+            />
           </div>
           <div style={{ marginTop: 8 }}>
-            <textarea placeholder="content" value={content} onChange={e => setContent(e.target.value)} />
+            <textarea
+              placeholder="content"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+            />
           </div>
           <div style={{ marginTop: 8 }}>
             <button type="submit">Create</button>
@@ -118,7 +126,10 @@ export default function NotesPage() {
         {!notes && <div>Loading...</div>}
         {notes && notes.length === 0 && <div>No notes</div>}
         {notes && notes.map(n => (
-          <div key={n.id} style={{ border: '1px solid #ddd', padding: 8, marginBottom: 8 }}>
+          <div
+            key={n.id}
+            style={{ border: '1px solid #ddd', padding: 8, marginBottom: 8 }}
+          >
             <strong>{n.title}</strong>
             <div>{n.content}</div>
             <div style={{ marginTop: 6 }}>
@@ -145,9 +156,8 @@ export default function NotesPage() {
 
       <div style={{ marginTop: 12 }}>
         <button onClick={() => {
-          localStorage.removeItem('token');
-          localStorage.removeItem('tenantSlug');
-          localStorage.removeItem('role');
+          clearAuthData();
+          localStorage.removeItem('role'); 
           router.push('/');
         }}>Logout</button>
       </div>
